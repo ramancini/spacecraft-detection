@@ -1,0 +1,3 @@
+[submodule "spacecraft-pose-object-detection-runtime"]
+	path = spacecraft-pose-object-detection-runtime
+	url = https://github.com/drivendataorg/spacecraft-pose-object-detection-runtime.git
