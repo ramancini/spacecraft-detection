@@ -1,0 +1,5 @@
+spacecraft-pose-object-detection-runtime/data/*
+compressed_data/*
+
+*.tar
+*.csv
