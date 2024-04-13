@@ -2,9 +2,13 @@ import os
 import io
 import tarfile as tf
 import pandas as pd
+import torch
+import torchvision
 
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.io import read_image
+from torchvision.transforms import ToTensor
 
 class SpacecraftImagesDataset(Dataset):
     def __init__(self, annotations_file, img_dir, transform=None):
@@ -19,6 +23,7 @@ class SpacecraftImagesDataset(Dataset):
         """
         self.img_labels = pd.read_csv(annotations_file)
         self.img_dir = img_dir
+        self.pil_to_tensor = ToTensor()
 
     def __len__(self):
         return len(self.img_labels)
@@ -35,7 +40,7 @@ class SpacecraftImagesDataset(Dataset):
         with tf.open(tar_path, "r") as src_tar:
             member = src_tar.getmember("images/" + img_name + ".png")
             image = src_tar.extractfile(member)
-            image = Image.open(io.BytesIO(image.read()))
+            image = self.pil_to_tensor(Image.open(io.BytesIO(image.read())))
 
         # Apply transform if input
         if self.transform:
