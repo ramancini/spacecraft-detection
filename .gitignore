@@ -1,5 +1,7 @@
 spacecraft-pose-object-detection-runtime/data/*
 compressed_data/*
+outputs/*
+nohup.out
 
-*.tar
-*.csv
+# *.tar
+# *.csv
