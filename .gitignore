@@ -3,5 +3,7 @@ compressed_data/*
 outputs/*
 nohup.out
 
+__pycache__
+
 # *.tar
 # *.csv
