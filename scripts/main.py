@@ -3,7 +3,6 @@ import torchvision
 import numpy as np
 import csv
 import time
-import utils
 import os
 import io
 import tarfile as tf
@@ -21,6 +20,8 @@ from typing import Tuple, List, Dict
 from collections import OrderedDict
 from torchvision.models.detection.rpn import concat_box_prediction_layers
 from torchvision.models.detection.roi_heads import fastrcnn_loss
+
+from torchinfo import summary
 
 
 ###############################################################################
@@ -263,7 +264,7 @@ model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 ###############################################################################
 # DEFINE LOSS AND OPTIMIZER
 ###############################################################################
-optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 
 ###############################################################################
 # TRAINING LOOP
@@ -272,7 +273,6 @@ optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 num_epochs = 20
 
 # Move model to the right device
-# model = nn.DataParallel(model)
 model.to(device)
 
 train_losses_list = []
@@ -283,48 +283,55 @@ loss_csv_fields = ["epoch", "save", "train_loss", "val_loss"]
 
 pbar_total = (num_epochs * len(train_dataloader)) + (num_epochs * len(val_dataloader))
 
+# Write header of CSV file to store loss data
 with open(loss_csv_filename, 'w') as csvfile:
     csvwriter = csv.writer(csvfile)
     csvwriter.writerow(loss_csv_fields)
-    with tqdm(total=pbar_total, desc="Training ") as pbar:
-        for epoch in range(num_epochs):
-            pbar.set_description("Training   ")
-            model.train()
-            for data in train_dataloader:
+
+# Start training loop
+with tqdm(total=pbar_total, desc="Training ") as pbar:
+    for epoch in range(num_epochs):
+        pbar.set_description("Training   ")
+        model.train()
+        for data in train_dataloader:
+            images = [d.to(device) for d, t in data]
+            targets = [{k: v.to(device) for (k,v) in t.items()} for d, t in data]
+
+            # Calculate the model loss
+            train_loss_dict = model(images, targets)
+            train_losses = sum(loss for loss in train_loss_dict.values())
+            train_losses_list.append(train_losses.item)
+            
+            # Backpropagation
+            optimizer.zero_grad()
+            train_losses.backward()
+            optimizer.step()
+            
+            pbar.update(1)
+
+        pbar.set_description("Validation ")
+        model.eval()
+        with torch.no_grad():
+            val_loss_accum = 0
+            for data in val_dataloader:
                 images = [d.to(device) for d, t in data]
                 targets = [{k: v.to(device) for (k,v) in t.items()} for d, t in data]
-
+                
                 # Calculate the model loss
-                train_loss_dict = model(images, targets)
-                train_losses = sum(loss for loss in train_loss_dict.values())
-                train_losses_list.append(train_losses.item)
-                
-                # Backpropagation
-                optimizer.zero_grad()
-                train_losses.backward()
-                optimizer.step()
-                
+                val_loss_dict = eval_forward(model, images, targets)
+                val_losses = sum(loss for loss in val_loss_dict[0].values())
+                val_losses_list.append(val_losses.item())
+
                 pbar.update(1)
 
-            pbar.set_description("Validation ")
-            model.eval()
-            with torch.no_grad():
-                val_loss_accum = 0
-                for data in val_dataloader:
-                    images = [d.to(device) for d, t in data]
-                    targets = [{k: v.to(device) for (k,v) in t.items()} for d, t in data]
-                    
-                    # Calculate the model loss
-                    val_loss_dict = eval_forward(model, images, targets)
-                    val_losses = sum(loss for loss in val_loss_dict[0].values())
-                    val_losses_list.append(val_losses.item())
-
-                    pbar.update(1)
-
+        # In the event something goes wrong, open, write, and close the file each epoch
+        with open(loss_csv_filename, 'a', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
             csvwriter.writerow([epoch, (epoch), train_losses.item(), val_losses.item()])
 
-            pbar.write(f'Epoch {epoch}, Train Loss: {train_losses.item()}, Validation Loss: {val_losses.item()}, Save State: {epoch}')
-            torch.save(model.state_dict(), save_state_dir + "/model_weights_" + filetime + f"_s{epoch}.pth")
+        # Print out losses and save model state
+        pbar.write(f'Epoch {epoch}, Train Loss: {train_losses.item()}, Validation Loss: {val_losses.item()}, Save State: {epoch}')
+        torch.save(model.state_dict(), save_state_dir + "/model_weights_" + filetime + f"_s{epoch}.pth")
 
 ###############################################################################
 # INFERENCE
@@ -332,59 +339,70 @@ with open(loss_csv_filename, 'w') as csvfile:
 # CSV file to store the highest confidence bounding boxes
 actual_output_file = inference_dir + "/actual_bboxes_" + filetime + ".csv"
 
-idx = 0
-
-# Open a CSV file to write the ground truth values
-with open(actual_output_file, mode='w', newline='') as file:
-    writer = csv.writer(file)
-
-    # Write the header
-    writer.writerow(["image_id", "xmin", "ymin", "xmax", "ymax"])
-
-    # Loop through the dataset
-    with tqdm(total=(len(test_dataloader))) as pbar:
-        for data in test_dataloader:
-            for target in data:
-                bbox_coords = target[1]['boxes'].numpy().flatten()
-                writer.writerow([idx, bbox_coords[0], bbox_coords[1], bbox_coords[2], bbox_coords[3]])
-                idx += 1
-            pbar.update(1)
+actual_idx = 0
 
 # CSV file to store the highest confidence bounding boxes
 predicted_output_file = inference_dir + "/predicted_bboxes_" + filetime + ".csv"
 
 # Ensure the model is on the appropriate device and in evaluation mode
 model.eval()
-model.cpu()
+model.to(device)
 
-idx = 0
+actual_idx = 0
+pred_idx = 0
 
 # Open a CSV file to write the ground truth values
-with open(predicted_output_file, mode='w', newline='') as file:
-    writer = csv.writer(file)
+with open(actual_output_file, mode='w', newline='') as actual_file, open(predicted_output_file, mode='w', newline='') as pred_file:
+    actual_writer = csv.writer(actual_file)
+    pred_writer = csv.writer(pred_file)
 
     # Write the header
-    writer.writerow(["image_id", "xmin", "ymin", "xmax", "ymax"])
+    actual_writer.writerow(["image_id", "xmin", "ymin", "xmax", "ymax"])
+    pred_writer.writerow(["image_id", "xmin", "ymin", "xmax", "ymax"])
 
     # Loop through the dataset
     with tqdm(total=(len(test_dataloader))) as pbar:
         with torch.no_grad():
             for data in test_dataloader:
-                images = [d.cpu() for d, t in data]
-                targets = [{k: v.cpu() for (k,v) in t.items()} for d, t in data]
+                images = [i.to(device) for i, b in data]
+                targets = [{k: v.to(device) for (k,v) in t.items()} for d, t in data]
 
                 val_dict = model(images, targets)
 
-                for d in val_dict:
-                    boxes = d['boxes']
+                for idx, d in enumerate(val_dict):
+                    pred_boxes = d['boxes']
+                    actual_boxes = targets[idx]['boxes']
                     scores = d['scores']
 
                     # Use non-max suppression to get the highest confidence bounding box
-                    highest_conf_bbox = torchvision.ops.nms(boxes, scores, 0.5)
-                    rows = [[idx, *torch.round(boxes[row_idx]).tolist()] for row_idx in highest_conf_bbox]
+                    highest_conf_bbox = torchvision.ops.nms(pred_boxes, scores, 0.5)
 
-                    # Write the index and bbox coords to csv file
-                    writer.writerows(rows)
-                    idx += 1
+                    # If there are multiple boxes, take the one with the highest confidence
+                    if len(highest_conf_bbox) > 1:
+                        curr_highest_idx = 0
+                        for row_idx in highest_conf_bbox:
+                            if scores[row_idx] > scores[curr_highest_idx]:
+                                curr_highest_idx = row_idx
+
+                        curr_pred = pred_boxes[curr_highest_idx].flatten().tolist()
+                        print(curr_pred)
+
+                    # If there are no boxes, write the actual box and a blank predicted box
+                    elif len(highest_conf_bbox) == 0:            
+                        # size of image is 1280x1024, so bounding box outside of range will give iou of 0
+                        curr_pred = [1282.0, 1026.0, 1283.0, 1027.0]
+
+                    else:
+                        curr_pred = pred_boxes[highest_conf_bbox[0]].flatten().tolist()
+
+                    # Get current actual bounding box
+                    curr_actual = actual_boxes.flatten().tolist()
+
+                    # Write the bounding boxes to the CSV files
+                    actual_writer.writerow([actual_idx, *curr_actual])
+                    pred_writer.writerow([pred_idx, *curr_pred])
+
+                    pred_idx += 1
+                    actual_idx += 1
 
                 pbar.update(1)
