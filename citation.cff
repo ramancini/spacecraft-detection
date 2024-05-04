@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+title: spacecraft-detection
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Bobby
+    family-names: Mancini
+    email: bam3869@rit.edu
+  - given-names: Luke
+    family-names: Spinosa
+    email: lds5450@rit.edu
+  - given-names: Nick
+    family-names: Duggan
+    email: nkd2840@rit.edu
+repository-code: 'https://github.com/ramancini/spacecraft-detection'
+abstract: >-
+  Faster R-CNN training and evaluation scripts for detection
+  of spacecraft in images
+license: MIT
