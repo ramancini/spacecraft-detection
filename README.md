@@ -4,6 +4,18 @@ Authors:
 - Robert Mancini
 - Luke Spinosa
 
+## Running the Code
+### Training
+All training occurs in the `scripts/main.py` file. To train the model, you must first be inside of the scripts directory
+```bash
+cd scripts
+```
+then run the file with the following command:
+```bash
+python main.py
+```
+A progress bar will display while training is occuring indicating the current batch being processed. Every epoch the loss data will be printed to the console and the models weights and loss data will be saved to a timestamped folder inside of a directory named `outputs` that will be created automatically in the root directory.
+
 ## Network Architecture
 ```
 =========================================================================================================
